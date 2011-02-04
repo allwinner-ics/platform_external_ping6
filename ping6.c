@@ -136,7 +136,17 @@ __RCSID("$NetBSD: ping6.c,v 1.73 2010/09/20 11:49:48 ahoka Exp $");
 #include <netinet6/ipsec.h>
 #endif
 
+/*
+ * We currently don't have the libc support required for these two features in
+ * Android. Should we get enough support later, feel free to remove the #ifdefs
+ * altogether.
+ */
+#undef ANDROID_INCLUDE_MD5_SUPPORT
+#undef ANDROID_INCLUDE_RTHDR_SUPPORT
+
+#ifdef ANDROID_INCLUDE_MD5_SUPPORT
 #include <md5.h>
+#endif
 
 struct tv32 {
 	u_int32_t tv32_sec;
@@ -196,6 +206,10 @@ u_int options;
 #define DUMMY_PORT	10101
 
 #define SIN6(s)	((struct sockaddr_in6 *)(s))
+
+/* Android-specific hacks to get this to compile.*/
+#define INFTIM             -1
+#define MAXDNAME           1025
 
 /*
  * MAX_DUP_CHK is the number of bits in received table, i.e. the maximum
@@ -269,14 +283,18 @@ char *dnsdecode(const u_char **, const u_char *, const u_char *,
 	char *, size_t);
 void	 pr_pack(u_char *, int, struct msghdr *);
 void	 pr_exthdrs(struct msghdr *);
+#ifdef ANDROID_INCLUDE_RTHDR_SUPPORT
 void	 pr_ip6opt(void *);
 void	 pr_rthdr(void *);
+#endif
 int	 pr_bitrange(u_int32_t, int, int);
 void	 pr_retip(struct ip6_hdr *, u_char *);
 void	 summary(void);
 void	 tvsub(struct timeval *, struct timeval *);
 int	 setpolicy(int, char *);
+#ifdef ANDROID_INCLUDE_MD5_SUPPORT
 char	*nigroup(char *);
+#endif
 void	 usage(void);
 
 int
@@ -300,7 +318,9 @@ main(int argc, char *argv[])
 #endif
 	int usepktinfo = 0;
 	struct in6_pktinfo *pktinfo = NULL;
+#ifdef ANDROID_INCLUDE_RTHDR_SUPPORT
 	struct ip6_rthdr *rthdr = NULL;
+#endif
 #ifdef IPSEC_POLICY_IPSEC
 	char *policy_in = NULL;
 	char *policy_out = NULL;
@@ -326,8 +346,14 @@ main(int argc, char *argv[])
 #define ADDOPTS	"AE"
 #endif /*IPSEC_POLICY_IPSEC*/
 #endif
+
+#ifdef ANDROID_INCLUDE_MD5_SUPPORT
+#define ANDROID_MD5_OPTS "N"
+#else
+#define ANDROID_MD5_OPTS ""
+#endif
 	while ((ch = getopt(argc, argv,
-	    "a:b:c:dfHg:h:I:i:l:mnNp:qRS:s:tvwW" ADDOPTS)) != -1) {
+	    "a:b:c:dfHg:h:I:i:l:mnp:qRS:s:tvwW" ADDOPTS ANDROID_MD5_OPTS)) != -1) {
 #undef ADDOPTS
 		switch (ch) {
 		case 'a':
@@ -465,9 +491,11 @@ main(int argc, char *argv[])
 		case 'n':
 			options &= ~F_HOSTNAME;
 			break;
+#ifdef ANDROID_INCLUDE_MD5_SUPPORT
 		case 'N':
 			options |= F_NIGROUP;
 			break;
+#endif
 		case 'p':		/* fill buffer with user pattern */
 			options |= F_PINGFILLED;
 			fill((char *)datap, optarg);
@@ -565,6 +593,7 @@ main(int argc, char *argv[])
 	}
 
 	if (argc > 1) {
+#ifdef ANDROID_INCLUDE_RTHDR_SUPPORT
 		rthlen = CMSG_SPACE(inet6_rth_space(IPV6_RTHDR_TYPE_0,
 		    argc - 1));
 		if (rthlen == 0) {
@@ -572,8 +601,12 @@ main(int argc, char *argv[])
 			/*NOTREACHED*/
 		}
 		ip6optlen += rthlen;
+#else
+		errx(1, "compiled without support for routing headers");
+#endif
 	}
 
+#ifdef ANDROID_INCLUDE_MD5_SUPPORT
 	if (options & F_NIGROUP) {
 		target = nigroup(argv[argc - 1]);
 		if (target == NULL) {
@@ -581,6 +614,7 @@ main(int argc, char *argv[])
 			/*NOTREACHED*/
 		}
 	} else
+#endif
 		target = argv[argc - 1];
 
 	/* getaddrinfo */
@@ -866,6 +900,7 @@ main(int argc, char *argv[])
 #endif
 
 	if (argc > 1) {	/* some intermediate addrs are specified */
+#ifdef ANDROID_INCLUDE_RTHDR_SUPPORT
 		int hops, error;
 		int rthdrlen;
 
@@ -896,6 +931,9 @@ main(int argc, char *argv[])
 		}
 
 		scmsgp = CMSG_NXTHDR(&smsghdr, scmsgp);
+#else
+		errx(1, "compiled without support for routing headers");
+#endif
 	}
 
 	if (!(options & F_SRCADDR)) {
@@ -929,10 +967,12 @@ main(int argc, char *argv[])
 		    (void *)&hoplimit, sizeof(hoplimit)))
 			err(1, "UDP setsockopt(IPV6_MULTICAST_HOPS)");
 
+#ifdef ANDROID_INCLUDE_RTHDR_SUPPORT
 		if (rthdr &&
 		    setsockopt(dummy, IPPROTO_IPV6, IPV6_RTHDR,
 		    (void *)rthdr, (rthdr->ip6r_len + 1) << 3))
 			err(1, "UDP setsockopt(IPV6_RTHDR)");
+#endif
 
 		if (connect(dummy, (struct sockaddr *)&src, len) < 0)
 			err(1, "UDP connect");
@@ -1677,6 +1717,7 @@ pr_exthdrs(struct msghdr *mhdr)
 			continue;
 
 		switch (cm->cmsg_type) {
+#ifdef ANDROID_INCLUDE_RTHDR_SUPPORT
 		case IPV6_HOPOPTS:
 			printf("  HbH Options: ");
 			pr_ip6opt(CMSG_DATA(cm));
@@ -1692,10 +1733,12 @@ pr_exthdrs(struct msghdr *mhdr)
 			printf("  Routing: ");
 			pr_rthdr(CMSG_DATA(cm));
 			break;
+#endif
 		}
 	}
 }
 
+#ifdef ANDROID_INCLUDE_RTHDR_SUPPORT
 void
 pr_ip6opt(void *extbuf)
 {
@@ -1747,7 +1790,9 @@ pr_ip6opt(void *extbuf)
 	}
 	return;
 }
+#endif
 
+#ifdef ANDROID_INCLUDE_RTHDR_SUPPORT
 void
 pr_rthdr(void *extbuf)
 {
@@ -1780,6 +1825,7 @@ pr_rthdr(void *extbuf)
 	return;
 
 }
+#endif
 
 int
 pr_bitrange(u_int32_t v, int soff, int ii)
@@ -2553,6 +2599,7 @@ setpolicy(int so, char *policy)
 #endif
 #endif
 
+#ifdef ANDROID_INCLUDE_MD5_SUPPORT
 char *
 nigroup(char *name)
 {
@@ -2596,6 +2643,7 @@ nigroup(char *name)
 
 	return strdup(hbuf);
 }
+#endif
 
 void
 usage(void)
